@@ -5,7 +5,11 @@ import { requireAuth } from "@/lib/auth";
 import { signCDNUrl } from "@/lib/bunny";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const signPhoto = (p: any) => ({ ...p, cdnUrl: signCDNUrl(p.cdnUrl) });
+const signPhoto = (p: any) => ({
+  ...p,
+  cdnUrl: signCDNUrl(p.cdnUrl),
+  thumbnailUrl: p.thumbnailUrl ? signCDNUrl(p.thumbnailUrl) : p.thumbnailUrl,
+});
 
 export async function GET(req: NextRequest) {
   try {
