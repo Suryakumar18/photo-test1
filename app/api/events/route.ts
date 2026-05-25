@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Event } from "@/models/Event";
 import { requireAuth } from "@/lib/auth";
-import { generateEventSlug, getEventShareUrl } from "@/lib/utils";
+import { generateEventSlug } from "@/lib/utils";
 import { uploadToBunny, getEventStoragePath } from "@/lib/bunny";
 import QRCode from "qrcode";
 
@@ -82,7 +82,15 @@ export async function POST(req: NextRequest) {
     }
 
     const slug = generateEventSlug(brideName, groomName, new Date(eventDate));
-    const shareUrl = getEventShareUrl(slug);
+
+    // Derive the actual host from the request so QR code works in any deployment
+    // (avoids relying on NEXT_PUBLIC_APP_URL which may default to localhost)
+    const host =
+      req.headers.get("x-forwarded-host") ||
+      req.headers.get("host") ||
+      "localhost:3000";
+    const protocol = host.includes("localhost") ? "http" : "https";
+    const shareUrl = `${protocol}://${host}/event/${slug}`;
 
     // Generate QR code
     const qrCode = await QRCode.toDataURL(shareUrl, {

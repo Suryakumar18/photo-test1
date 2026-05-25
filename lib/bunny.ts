@@ -1,7 +1,11 @@
-const BUNNY_ACCESS_KEY = process.env.BUNNY_ACCESS_KEY!;
-const BUNNY_STORAGE_ZONE = process.env.BUNNY_STORAGE_ZONE || "wowlifestyle123";
-const BUNNY_STORAGE_HOST = process.env.BUNNY_STORAGE_HOST || "https://storage.bunnycdn.com";
-const BUNNY_CDN_URL = process.env.BUNNY_CDN_URL || "https://wowlifestyle.b-cdn.net";
+const BUNNY_ACCESS_KEY =
+  process.env.BUNNY_ACCESS_KEY || "cabbf7e8-98df-40d4-85b49ca02d1f-480e-4967";
+const BUNNY_STORAGE_ZONE =
+  process.env.BUNNY_STORAGE_ZONE || "wowlifestyle123";
+const BUNNY_STORAGE_HOST =
+  process.env.BUNNY_STORAGE_HOST || "https://storage.bunnycdn.com";
+const BUNNY_CDN_URL =
+  process.env.BUNNY_CDN_URL || "https://wowlifestyle.b-cdn.net";
 
 export const bunnyConfig = {
   accessKey: BUNNY_ACCESS_KEY,
@@ -82,7 +86,8 @@ export function generateSignedUrl(remotePath: string, expiresIn = 3600): string 
   // is only ever imported in server-side API routes (never in client bundles).
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const nodeCrypto: typeof import("crypto") = require("crypto");
-  const tokenKey = process.env.BUNNY_TOKEN_KEY!;
+  const tokenKey =
+    process.env.BUNNY_TOKEN_KEY || "d92a0d66-cd9c-4915-890c-367c673dc8e0";
   const expirationTime = Math.floor(Date.now() / 1000) + expiresIn;
   const hashableBase = tokenKey + remotePath + expirationTime;
 

@@ -78,6 +78,9 @@ export default function EventDetailPage() {
   const [wmEnabled, setWmEnabled] = useState(false);
   const [wmUrl, setWmUrl] = useState<string | null>(null);
 
+  // ── QR regeneration ──────────────────────────────────────────────────────
+  const [qrRegenerating, setQrRegenerating] = useState(false);
+
   useEffect(() => {
     const token = getToken();
     if (!token) return;
@@ -109,6 +112,28 @@ export default function EventDetailPage() {
     queryFn: () => fetchPhotos(id),
     enabled: !!id,
   });
+
+  // Auto-fix QR code if it was generated with a localhost URL
+  // (happens when NEXT_PUBLIC_APP_URL wasn't set during the first deployment)
+  useEffect(() => {
+    if (!event?.shareUrl?.includes("localhost")) return;
+    const token = getToken();
+    if (!token) return;
+    setQrRegenerating(true);
+    fetch(`/api/events/${event.slug}/regenerate-qr`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.success) {
+          queryClient.invalidateQueries({ queryKey: ["event", id] });
+          toast.success("QR code updated to production URL");
+        }
+      })
+      .catch(() => {})
+      .finally(() => setQrRegenerating(false));
+  }, [event?.shareUrl, event?.slug, id, queryClient]);
 
   const photos: Array<{
     _id: string; cdnUrl: string; originalName: string; size: number; createdAt: string;
@@ -288,7 +313,9 @@ export default function EventDetailPage() {
     brideName: "Bride", groomName: "Groom",
     eventDate: new Date(), location: "Venue",
     coverImageCDN: null, qrCode: null,
-    shareUrl: `http://localhost:3000/event/event-${id}`,
+    shareUrl: typeof window !== "undefined"
+      ? `${window.location.origin}/event/event-${id}`
+      : `/event/event-${id}`,
     status: "upcoming", photosCount: 0, videosCount: 0,
     viewsCount: 0, faceMatchCount: 0, storageUsed: 0,
     photographers: [], isPublic: true, createdAt: new Date(),
@@ -436,7 +463,12 @@ export default function EventDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {ev.qrCode ? (
+                {qrRegenerating ? (
+                  <div className="bg-muted rounded-xl p-8 text-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
+                    <p className="text-xs text-muted-foreground">Updating QR code…</p>
+                  </div>
+                ) : ev.qrCode ? (
                   <div className="bg-white p-4 rounded-xl">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={ev.qrCode} alt="QR Code" className="w-36 h-36 mx-auto" />
@@ -453,7 +485,7 @@ export default function EventDetailPage() {
                     {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
                   </button>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   {ev.qrCode && (
                     <Button variant="outline" size="sm" className="flex-1 gap-1.5" onClick={() => downloadQR(ev.qrCode, ev.title)}>
                       <Download className="w-3.5 h-3.5" /> QR PNG
@@ -461,6 +493,36 @@ export default function EventDetailPage() {
                   )}
                   <Button variant="outline" size="sm" className="flex-1 gap-1.5" onClick={() => copyLink(ev.shareUrl)}>
                     <Share2 className="w-3.5 h-3.5" /> Copy Link
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-1.5"
+                    disabled={qrRegenerating}
+                    onClick={() => {
+                      if (!ev.slug) return;
+                      setQrRegenerating(true);
+                      fetch(`/api/events/${ev.slug}/regenerate-qr`, {
+                        method: "POST",
+                        headers: { Authorization: `Bearer ${getToken()}` },
+                      })
+                        .then((r) => r.json())
+                        .then((j) => {
+                          if (j.success) {
+                            queryClient.invalidateQueries({ queryKey: ["event", id] });
+                            toast.success("QR code regenerated!");
+                          } else {
+                            toast.error(j.error || "Failed to regenerate QR");
+                          }
+                        })
+                        .catch(() => toast.error("Failed to regenerate QR"))
+                        .finally(() => setQrRegenerating(false));
+                    }}
+                  >
+                    {qrRegenerating
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Regenerating…</>
+                      : <><QrCode className="w-3.5 h-3.5" /> Regenerate QR</>
+                    }
                   </Button>
                 </div>
               </CardContent>
