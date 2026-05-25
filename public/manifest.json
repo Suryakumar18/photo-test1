@@ -1,0 +1,21 @@
+{
+  "name": "Memorable Pictures",
+  "short_name": "MemPics",
+  "description": "AI-Powered Wedding Photography Platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F0F1A",
+  "theme_color": "#F43F5E",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["photography", "business", "utilities"],
+  "lang": "en",
+  "dir": "ltr",
+  "orientation": "any"
+}

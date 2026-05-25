@@ -1,0 +1,57 @@
+
+> memorable-pictures@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.3.3
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.92:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.8s
+ ○ Compiling /api/super-admin/studios/[studioId] ...
+ ✓ Compiled /api/super-admin/studios/[studioId] in 4.5s (455 modules)
+✅ MongoDB connected successfully
+ GET /api/super-admin/studios/STD-Z1RNUS 404 in 7140ms
+ GET /api/super-admin/studios/STD-Z1RNUS 404 in 108ms
+ ⨯ Failed to generate static paths for /api/super-admin/studios/[studioId]:
+[Error: ENOENT: no such file or directory, open 'C:\Users\surya\Desktop\photography\.next\build-manifest.json'] {
+  type: 'Error',
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\surya\\Desktop\\photography\\.next\\build-manifest.json'
+}
+ ○ Compiling /super-admin/studios/[studioId] ...
+ ✓ Compiled /super-admin/studios/[studioId] in 12.1s (1809 modules)
+ ✓ Compiled in 909ms (805 modules)
+ GET /api/super-admin/studios/STD-Z1RNUS 200 in 712ms
+ ✓ Compiled in 886ms (791 modules)
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\surya\Desktop\photography\.next\server\app\api\super-admin\studios\[studioId]\route.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\surya\\Desktop\\photography\\.next\\server\\app\\api\\super-admin\\studios\\[studioId]\\route.js',
+  page: '/api/super-admin/studios/STD-Z1RNUS'
+}
+ GET /super-admin/studios/STD-Z1RNUS 200 in 14099ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 3.5s (2124 modules)
+ GET /sw.js 404 in 826ms
+ GET /_next/static/chunks/main-app.js?v=1779434475902 404 in 3957ms
+ ○ Compiling / ...
+ ✓ Compiled / in 5.8s (2046 modules)
+ GET / 200 in 7225ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1392ms (2050 modules)
+ GET /_next/static/chunks/main-app.js?v=1779434779188 404 in 1816ms
+ GET /icon-192x192.png 404 in 134ms
+ GET /sw.js 404 in 86ms
+ GET / 200 in 616ms
+ GET /_next/static/chunks/main-app.js?v=1779434793536 404 in 155ms
+ GET /icon-192x192.png 404 in 74ms
+ GET /sw.js 404 in 59ms
+ GET / 200 in 588ms
+ GET /_next/static/chunks/main-app.js?v=1779434802724 404 in 115ms
+ GET /icon-192x192.png 404 in 56ms
+ GET /sw.js 404 in 64ms
