@@ -58,8 +58,8 @@ function fmtDate(d: string) {
   });
 }
 
-function fmtINR(n: number) {
-  return `₹${n.toLocaleString("en-IN")}`;
+function fmtINR(n: number | undefined | null) {
+  return `₹${(n ?? 0).toLocaleString("en-IN")}`;
 }
 
 export default function BillingPage() {
@@ -102,7 +102,7 @@ export default function BillingPage() {
         ${inv.transactionId ? `<tr><th>Transaction ID</th><td>${inv.transactionId}</td></tr>` : ""}
         ${inv.paidAt ? `<tr><th>Paid On</th><td>${fmtDate(inv.paidAt)}</td></tr>` : ""}
       </table>
-      <div class="total">Total: ₹${inv.amount.toLocaleString("en-IN")}</div>
+      <div class="total">Total: ₹${(inv.amount ?? 0).toLocaleString("en-IN")}</div>
       <script>window.print();window.close();</script>
       </body></html>
     `);

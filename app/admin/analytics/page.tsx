@@ -253,8 +253,8 @@ export default function AnalyticsPage() {
                           {event.name}
                         </div>
                       </td>
-                      <td className="text-right py-3 px-4 font-medium">{event.photos.toLocaleString()}</td>
-                      <td className="text-right py-3 px-4 text-muted-foreground">{event.visitors.toLocaleString()}</td>
+                      <td className="text-right py-3 px-4 font-medium">{(event.photos ?? 0).toLocaleString()}</td>
+                      <td className="text-right py-3 px-4 text-muted-foreground">{(event.visitors ?? 0).toLocaleString()}</td>
                       <td className="text-right py-3 pl-4">
                         <Badge variant="rose" className="text-xs">{event.faceMatches}</Badge>
                       </td>

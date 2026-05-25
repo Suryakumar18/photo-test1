@@ -279,7 +279,7 @@ export function EventDetailModal({
                     <div className={`w-8 h-8 rounded-lg ${s.color} flex items-center justify-center mx-auto mb-1.5`}>
                       <s.icon className="w-4 h-4" />
                     </div>
-                    <p className="font-bold text-sm">{s.value.toLocaleString()}</p>
+                    <p className="font-bold text-sm">{(s.value ?? 0).toLocaleString()}</p>
                     <p className="text-[10px] text-muted-foreground">{s.label}</p>
                   </div>
                 ))}

@@ -131,7 +131,7 @@ export default function EventLandingPage() {
               )}
               {!!event.photosCount && event.photosCount > 0 && (
                 <span className="flex items-center gap-1.5">
-                  <Images className="w-4 h-4" /> {event.photosCount.toLocaleString()} photos
+                  <Images className="w-4 h-4" /> {(event.photosCount ?? 0).toLocaleString()} photos
                 </span>
               )}
             </div>

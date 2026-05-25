@@ -416,7 +416,7 @@ export default function EventDetailPage() {
                     <stat.icon className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-xl font-bold">{stat.value.toLocaleString()}</p>
+                    <p className="text-xl font-bold">{(stat.value ?? 0).toLocaleString()}</p>
                     <p className="text-xs text-muted-foreground">{stat.label}</p>
                   </div>
                 </CardContent>

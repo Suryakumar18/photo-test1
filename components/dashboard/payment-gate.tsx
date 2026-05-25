@@ -49,7 +49,7 @@ export function PaymentDueBanner({ data }: { data: BillingData }) {
           : `Payment due in ${days} day${days !== 1 ? "s" : ""}.`}
         {pendingInv && (
           <span className="font-semibold ml-1">
-            ₹{pendingInv.amount.toLocaleString("en-IN")} pending.
+            ₹{(pendingInv.amount ?? 0).toLocaleString("en-IN")} pending.
           </span>
         )}
         &nbsp;Contact your super admin to process payment.

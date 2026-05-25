@@ -100,7 +100,7 @@ export function StorageModal({ open, onClose }: { open: boolean; onClose: () => 
                       <ImageIcon className="w-4 h-4 text-rose-500" />
                     </div>
                     <div>
-                      <p className="font-bold text-sm">{totalPhotos.toLocaleString()}</p>
+                      <p className="font-bold text-sm">{(totalPhotos ?? 0).toLocaleString()}</p>
                       <p className="text-[11px] text-muted-foreground">Photos</p>
                     </div>
                   </div>

@@ -96,7 +96,7 @@ export function StudioCard({ studio, delay = 0, onStorageClick, onSuspendClick }
       <div className="grid grid-cols-2 gap-2 mb-4">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Image className="w-3.5 h-3.5 text-violet-400" />
-          <span>{studio.photosCount.toLocaleString()} photos</span>
+          <span>{(studio.photosCount ?? 0).toLocaleString()} photos</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Camera className="w-3.5 h-3.5 text-pink-400" />
