@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Event } from "@/models/Event";
 import { requireAuth } from "@/lib/auth";
+import { signCDNUrl } from "@/lib/bunny";
 import mongoose from "mongoose";
 
 type RouteContext = { params: Promise<{ slug: string }> };
@@ -26,7 +27,11 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ success: false, error: "Event not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, data: event });
+    const data = {
+      ...event,
+      coverImageCDN: event.coverImageCDN ? signCDNUrl(event.coverImageCDN) : event.coverImageCDN,
+    };
+    return NextResponse.json({ success: true, data });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("Get event error:", msg);

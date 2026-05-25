@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Photo } from "@/models/Photo";
 import { requireAuth } from "@/lib/auth";
+import { signCDNUrl } from "@/lib/bunny";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const signPhoto = (p: any) => ({ ...p, cdnUrl: signCDNUrl(p.cdnUrl) });
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,7 +27,7 @@ export async function GET(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        data: { photos, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+        data: { photos: photos.map(signPhoto), pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
       });
     }
 
@@ -73,7 +77,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        photos,
+        photos: photos.map(signPhoto),
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       },
     });

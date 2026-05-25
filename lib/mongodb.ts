@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 // Validation happens inside connectDB() instead.
 const MONGODB_URI =
   process.env.MONGODB_URI ||
-  "mongodb+srv://photographyapp71_db_user:3XiEwvKYpePm8TY0@cluster0.objlne2.mongodb.net/photographyevents?retryWrites=true&w=majority&appName=Cluster0";
+  "mongodb://localhost:27017/photographyevents";
 
 interface MongooseCache {
   conn: typeof mongoose | null;

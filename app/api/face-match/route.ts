@@ -3,7 +3,7 @@ import connectDB from "@/lib/mongodb";
 import { Photo } from "@/models/Photo";
 import { FaceEmbedding } from "@/models/FaceEmbedding";
 import { Event } from "@/models/Event";
-import { uploadToBunny } from "@/lib/bunny";
+import { uploadToBunny, signCDNUrl } from "@/lib/bunny";
 import { v4 as uuidv4 } from "uuid";
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -91,8 +91,9 @@ export async function POST(req: NextRequest) {
       success: true,
       data: {
         matchCount: matchedPhotos.length,
-        photos: matchedPhotos,
-        selfieUrl,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        photos: matchedPhotos.map((p: any) => ({ ...p, cdnUrl: signCDNUrl(p.cdnUrl) })),
+        selfieUrl: selfieUrl ? signCDNUrl(selfieUrl) : "",
       },
     });
   } catch (error) {

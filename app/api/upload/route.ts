@@ -4,7 +4,7 @@ import { Photo } from "@/models/Photo";
 import { Event } from "@/models/Event";
 import { Studio } from "@/models/Studio";
 import { requireAuth } from "@/lib/auth";
-import { uploadToBunny, getEventStoragePath } from "@/lib/bunny";
+import { uploadToBunny, getEventStoragePath, signCDNUrl } from "@/lib/bunny";
 import { v4 as uuidv4 } from "uuid";
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic"];
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
       data: {
         photoId: photo._id.toString(),
         filename,
-        cdnUrl,
+        cdnUrl: signCDNUrl(cdnUrl),
         size: file.size,
       },
       message: "File uploaded successfully",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Event } from "@/models/Event";
 import { Studio } from "@/models/Studio";
+import { signCDNUrl } from "@/lib/bunny";
 
 export async function GET(
   req: NextRequest,
@@ -53,7 +54,7 @@ export async function GET(
         groomName: event.groomName,
         eventDate: event.eventDate,
         location: event.location,
-        coverImageCDN: event.coverImageCDN,
+        coverImageCDN: event.coverImageCDN ? signCDNUrl(event.coverImageCDN) : undefined,
         photosCount: event.photosCount,
         videosCount: event.videosCount,
         status: event.status,

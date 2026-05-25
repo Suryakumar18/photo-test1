@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
       // Bunny CDN — primary media store
       {
         protocol: "https",
-        hostname: "wowlifestyle.b-cdn.net",
+        hostname: "testphotography.b-cdn.net",
         pathname: "/**",
       },
       // Bunny Storage (direct upload URLs)
