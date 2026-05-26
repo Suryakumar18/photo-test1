@@ -7,7 +7,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Calendar, Camera, Check, Copy, Download, Eye,
   Image, Loader2, MapPin, QrCode, Share2, Trash2, Upload,
-  Users, X, ZoomIn, Plus, CloudUpload, AlertTriangle,
+  Users, X, ZoomIn, Plus, CloudUpload, AlertTriangle, ScanFace,
 } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Topbar } from "@/components/dashboard/topbar";
@@ -81,6 +81,38 @@ export default function EventDetailPage() {
   // ── QR regeneration ──────────────────────────────────────────────────────
   const [qrRegenerating, setQrRegenerating] = useState(false);
 
+  // ── Face indexing ─────────────────────────────────────────────────────────
+  interface ScanState { active: boolean; done: number; total: number; faces: number }
+  const [scanState, setScanState] = useState<ScanState | null>(null);
+
+  /**
+   * Extract face descriptors from a single proxy URL and store them in MongoDB.
+   * Called automatically after each photo upload + manually from "Scan All Faces".
+   */
+  const indexPhotoFaces = useCallback(async (photoId: string, proxyUrl: string): Promise<number> => {
+    try {
+      const { getPhotoDescriptors } = await import("@/lib/face-recognition");
+      const descriptors = await getPhotoDescriptors(proxyUrl);
+      if (descriptors.length === 0) return 0;
+
+      const embeddings = descriptors.map((d) => Array.from(d)); // Float32Array → number[]
+      const res = await fetch("/api/faces/store", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify({ photoId, eventId: id, embeddings }),
+      });
+      const json = await res.json();
+      return res.ok ? (json.data?.facesIndexed ?? 0) : 0;
+    } catch {
+      return 0;
+    }
+  }, [id]);
+
+  // scanAllFaces is defined after `photos` (line ~195) to avoid TDZ reference errors
+
   useEffect(() => {
     const token = getToken();
     if (!token) return;
@@ -138,6 +170,31 @@ export default function EventDetailPage() {
   const photos: Array<{
     _id: string; cdnUrl: string; originalName: string; size: number; createdAt: string;
   }> = photosData?.photos ?? [];
+
+  /**
+   * Batch-index all event photos (run 4 in parallel for speed).
+   * Called when admin clicks "Scan All Faces".
+   * Defined here so `photos` is in scope (avoids TDZ reference errors).
+   */
+  const scanAllFaces = useCallback(async () => {
+    if (!photos.length) { toast.error("No photos to scan"); return; }
+
+    setScanState({ active: true, done: 0, total: photos.length, faces: 0 });
+    const BATCH = 4;
+    let totalFaces = 0;
+
+    for (let i = 0; i < photos.length; i += BATCH) {
+      const batch = photos.slice(i, i + BATCH);
+      const counts = await Promise.all(
+        batch.map((p) => indexPhotoFaces(p._id, p.cdnUrl))
+      );
+      totalFaces += counts.reduce((a, b) => a + b, 0);
+      setScanState({ active: true, done: Math.min(i + BATCH, photos.length), total: photos.length, faces: totalFaces });
+    }
+
+    setScanState((prev) => prev ? { ...prev, active: false } : null);
+    toast.success(`✅ Scanned ${photos.length} photos · ${totalFaces} faces indexed`);
+  }, [photos, indexPhotoFaces]);
 
   // ── Status mutation ────────────────────────────────────────────────────────
 
@@ -237,9 +294,15 @@ export default function EventDetailPage() {
       );
 
       // Refetch the photo grid — the new photo comes from DB, not the preview.
-      // Done previews are intentionally NOT shown in the main grid (upload panel shows ✓).
       queryClient.invalidateQueries({ queryKey: ["photos", id] });
       queryClient.invalidateQueries({ queryKey: ["event", id] });
+
+      // Auto-index faces in background (non-blocking) so face search works immediately
+      const uploadedPhotoId = data.data?.photoId;
+      const uploadedCdnUrl  = data.data?.cdnUrl;
+      if (uploadedPhotoId && uploadedCdnUrl) {
+        indexPhotoFaces(uploadedPhotoId, uploadedCdnUrl).catch(() => {});
+      }
     } catch (err) {
       setUploads((prev) =>
         prev.map((u) =>
@@ -676,12 +739,24 @@ export default function EventDetailPage() {
                     <Image className="w-4 h-4 text-primary" />
                     Photos ({photos.length + (doneCount > 0 && !showUploadPanel ? 0 : 0)})
                   </CardTitle>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Link href={`/event/${ev.slug}/gallery`} target="_blank">
                       <Button variant="ghost" size="sm" className="text-xs h-7 gap-1">
                         <Eye className="w-3 h-3" /> Guest Gallery
                       </Button>
                     </Link>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 gap-1"
+                      disabled={scanState?.active}
+                      onClick={scanAllFaces}
+                      title="Extract face embeddings from all photos so guests can search by selfie"
+                    >
+                      {scanState?.active
+                        ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning {scanState.done}/{scanState.total}</>
+                        : <><ScanFace className="w-3.5 h-3.5" /> Scan Faces</>}
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"
@@ -697,6 +772,33 @@ export default function EventDetailPage() {
                 </div>
               </CardHeader>
               <CardContent>
+                {/* Face scan progress */}
+                {scanState && (
+                  <div className="mb-4 p-3 rounded-xl bg-primary/5 border border-primary/20">
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <span className="font-medium text-primary flex items-center gap-1.5">
+                        <ScanFace className="w-3.5 h-3.5" />
+                        {scanState.active ? "Indexing faces…" : "Face scan complete"}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {scanState.done}/{scanState.total} photos · {scanState.faces} faces found
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <motion.div
+                        className="h-full bg-primary rounded-full"
+                        animate={{ width: `${(scanState.done / scanState.total) * 100}%` }}
+                        transition={{ ease: "linear" }}
+                      />
+                    </div>
+                    {!scanState.active && (
+                      <p className="text-[11px] text-muted-foreground mt-1.5">
+                        Guests can now use selfie search on this event ✓
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {photosLoading ? (
                   <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
                     {Array.from({ length: 8 }).map((_, i) => (

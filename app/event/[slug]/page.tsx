@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
 import {
-  matchSelfieToPhotos, NoFaceError, type MatchResult,
+  loadModels, getSelfieDescriptor, NoFaceError, type MatchResult,
   SENSITIVITY, type SensitivityLevel,
 } from "@/lib/face-recognition";
 import toast from "react-hot-toast";
@@ -237,46 +237,68 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sensitivity, setSensitivity] = useState<SensitivityLevel>("balanced");
 
-  // Preload event photos so they're ready when the user uploads a selfie
-  const { data: photos = [] } = useQuery({
-    queryKey: ["face-match-photos", event._id],
-    queryFn: () => fetchPhotos(event._id),
-  });
+  // photos list is no longer needed client-side — server does the matching
+  // (kept as empty array to avoid refactoring the selfie count display below)
+  const photos: EventPhoto[] = [];
 
   const handleSelfieUpload = async (file: File) => {
     setSelfiePreview(URL.createObjectURL(file));
     setErrorMsg(null);
     setMatches([]);
-    setProgress({ done: 0, total: 0, found: 0 });
     setStep("processing");
 
     try {
-      // Ensure photos are loaded (handles the race where the user uploads quickly)
-      let eventPhotos = photos;
-      if (eventPhotos.length === 0) {
-        eventPhotos = await fetchPhotos(event._id);
-      }
+      // Phase 1 — load models + compute selfie descriptor in the browser (1 image, ~2 s)
+      setProgress({ done: 0, total: 0, found: 0 }); // shows "Loading AI models…"
+      await loadModels();
+      setProgress({ done: 0, total: 1, found: 0 });  // shows "Detecting your face…"
 
-      if (eventPhotos.length === 0) {
-        setErrorMsg("This event has no photos yet. Please check back once the photographer uploads.");
+      const selfieDescriptor = await getSelfieDescriptor(file);
+      if (!selfieDescriptor) throw new NoFaceError();
+
+      setProgress({ done: 1, total: 1, found: 0 }); // "Searching event photos…"
+
+      // Phase 2 — send descriptor to server; server compares against pre-indexed embeddings
+      // This takes < 1 second even for 10,000 stored face embeddings.
+      const res = await fetch("/api/face-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          descriptor: Array.from(selfieDescriptor),   // Float32Array → number[]
+          eventId:    event._id,
+          threshold:  SENSITIVITY[sensitivity],
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Face match failed");
+
+      if (!json.data.indexed) {
+        // Admin hasn't indexed faces for this event yet
+        setErrorMsg(
+          "Face search is not set up for this event yet. " +
+          "Please ask the photographer to scan the event photos, or browse the full gallery."
+        );
         setStep("results");
         return;
       }
 
-      setProgress({ done: 0, total: eventPhotos.length, found: 0 });
-      const results = await matchSelfieToPhotos(
-        file,
-        eventPhotos,
-        (done, total, found) => setProgress({ done, total, found }),
-        SENSITIVITY[sensitivity],
-      );
-      setMatches(results);
+      const serverPhotos: EventPhoto[] = json.data.photos;
+      setProgress({ done: 1, total: 1, found: serverPhotos.length });
+
+      // Build MatchResult objects from server response (confidence already computed)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setMatches(serverPhotos.map((p: any) => ({
+        photo: p,
+        distance: 1 - (p.confidence / 100),
+        confidence: p.confidence,
+      })));
       setStep("results");
     } catch (err) {
       if (err instanceof NoFaceError) {
-        setErrorMsg("We couldn't detect a face in your selfie. Please use a clear, front-facing photo.");
+        setErrorMsg("No face detected in your selfie. Please use a clear, front-facing photo with good lighting.");
       } else {
-        setErrorMsg("Something went wrong while scanning. Please try again.");
+        setErrorMsg("Something went wrong. Please try again.");
       }
       setStep("results");
     }
@@ -316,20 +338,22 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
           <h2 className="text-2xl font-bold mb-2">Scanning Photos…</h2>
           <p className="text-muted-foreground text-sm mb-6">
             {progress.total === 0
-              ? "Loading AI models…"
-              : <>AI is comparing your face against <span className="font-semibold text-foreground">{progress.total} photos</span></>}
+              ? "Loading AI face model…"
+              : progress.done === 0
+              ? "Detecting your face in the selfie…"
+              : "Searching " + (progress.found > 0 ? `— ${progress.found} match${progress.found === 1 ? "" : "es"} found!` : "event photos…")}
           </p>
           <div className="h-2 bg-muted rounded-full overflow-hidden">
             <motion.div
               className="h-full bg-gradient-to-r from-rose-500 to-pink-500 rounded-full"
-              animate={{ width: `${pct}%` }}
-              transition={{ ease: "linear" }}
+              animate={{ width: progress.total === 0 ? "15%" : progress.done < progress.total ? "70%" : "100%" }}
+              transition={{ ease: "linear", duration: 0.5 }}
             />
           </div>
           <p className="text-xs text-muted-foreground mt-3">
-            {progress.total > 0
-              ? `${progress.done} / ${progress.total} scanned · ${progress.found} match${progress.found === 1 ? "" : "es"} found`
-              : "Initializing face recognition…"}
+            {progress.total === 0 && "Initializing face recognition…"}
+            {progress.total > 0 && progress.done === 0 && "Analysing selfie…"}
+            {progress.done > 0 && "Comparing against indexed photos on server…"}
           </p>
         </motion.div>
       </div>
