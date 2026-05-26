@@ -94,19 +94,23 @@ export default function EventDetailPage() {
    * upgrade path but currently returns 503 → falls back to browser automatically.
    */
   const indexPhotoFaces = useCallback(async (photoId: string, proxyUrl: string): Promise<number> => {
-    // ── Browser-side: face-api.js (works reliably after URL-routing fix) ──────
+    // Detect faces in the browser, then ALWAYS persist to mark the photo as processed.
+    // Even if detection finds 0 faces (or fails), we still call /api/faces/store
+    // so isProcessed=true is set — guests see "No matches" not "Not Ready Yet".
+    let embeddings: number[][] = [];
+
     try {
       const { getPhotoDescriptors } = await import("@/lib/face-recognition");
       const descriptors = await getPhotoDescriptors(proxyUrl);
-      if (descriptors.length === 0) return 0;
+      embeddings = descriptors.map((d) => Array.from(d));
+    } catch {
+      // Face detection failed — still mark the photo as processed below
+    }
 
-      const embeddings = descriptors.map((d) => Array.from(d)); // Float32Array → number[]
+    try {
       const res = await fetch("/api/faces/store", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken()}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ photoId, eventId: id, embeddings }),
       });
       const json = await res.json();

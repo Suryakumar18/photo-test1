@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Camera, Heart, Instagram, Twitter, Facebook } from "lucide-react";
+import { Camera, Heart, Instagram, Twitter, Facebook, Phone, MessageCircle } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
 export function Footer() {
@@ -63,19 +63,37 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Legal */}
+          {/* Contact */}
           <div>
-            <h4 className="font-semibold mb-4">Legal</h4>
+            <h4 className="font-semibold mb-4">Contact Us</h4>
             <ul className="space-y-3 text-sm text-muted-foreground">
-              {["Privacy Policy", "Terms of Service", "Cookie Policy", "GDPR", "Security"].map(
-                (item) => (
-                  <li key={item}>
-                    <Link href="#" className="hover:text-foreground transition-colors">
-                      {item}
-                    </Link>
-                  </li>
-                )
-              )}
+              <li>
+                <a
+                  href="https://wa.me/918610659547"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 hover:text-green-500 transition-colors group"
+                >
+                  <MessageCircle className="w-4 h-4 text-green-500" />
+                  <span>WhatsApp Us</span>
+                </a>
+              </li>
+              <li>
+                <a
+                  href="tel:+918610659547"
+                  className="flex items-center gap-2 hover:text-foreground transition-colors"
+                >
+                  <Phone className="w-4 h-4" />
+                  <span>+91 86106 59547</span>
+                </a>
+              </li>
+              {["Privacy Policy", "Terms of Service"].map((item) => (
+                <li key={item}>
+                  <Link href="#" className="hover:text-foreground transition-colors">
+                    {item}
+                  </Link>
+                </li>
+              ))}
             </ul>
           </div>
         </div>

@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   LogOut,
   Shield,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSuperAdminStore } from "@/store/super-admin-store";
@@ -23,6 +24,7 @@ const navItems = [
   { href: "/super-admin/studios",   icon: Building2,       label: "Studios" },
   { href: "/super-admin/billing",   icon: CreditCard,      label: "Billing" },
   { href: "/super-admin/analytics", icon: BarChart3,       label: "Live Analytics" },
+  { href: "/super-admin/plans",     icon: Layers,          label: "Pricing Plans" },
 ];
 
 export function SuperAdminSidebar() {
