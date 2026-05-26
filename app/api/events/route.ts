@@ -3,7 +3,7 @@ import connectDB from "@/lib/mongodb";
 import { Event } from "@/models/Event";
 import { requireAuth } from "@/lib/auth";
 import { generateEventSlug } from "@/lib/utils";
-import { uploadToBunny, getEventStoragePath } from "@/lib/bunny";
+import { uploadToBunny, getEventStoragePath, signCDNUrl } from "@/lib/bunny";
 import QRCode from "qrcode";
 
 export async function GET(req: NextRequest) {
@@ -40,10 +40,17 @@ export async function GET(req: NextRequest) {
       .limit(limit)
       .lean();
 
+    // Sign all cover image URLs so they go through the proxy (no CDN 403)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const signedEvents = events.map((e: any) => ({
+      ...e,
+      coverImageCDN: e.coverImageCDN ? signCDNUrl(e.coverImageCDN) : e.coverImageCDN,
+    }));
+
     return NextResponse.json({
       success: true,
       data: {
-        events,
+        events: signedEvents,
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       },
     });

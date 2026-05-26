@@ -3,6 +3,7 @@ import connectDB from "@/lib/mongodb";
 import { Event } from "@/models/Event";
 import { Photo } from "@/models/Photo";
 import { requireAuth } from "@/lib/auth";
+import { signCDNUrl } from "@/lib/bunny";
 
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req, ["admin", "photographer"]);
@@ -66,7 +67,8 @@ export async function GET(req: NextRequest) {
         faceMatchCount: 0,
         liveUploads: 0,
         revenue: 0,
-        recentPhotos,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recentPhotos: recentPhotos.map((p: any) => ({ ...p, cdnUrl: signCDNUrl(p.cdnUrl) })),
         activityTimeline: recentActivity,
         uploadTrend,
         visitorTrend: [],

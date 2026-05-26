@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Studio } from "@/models/Studio";
 import { requireAuth } from "@/lib/auth";
+import { signCDNUrl } from "@/lib/bunny";
 
 // ── GET /api/studio/settings ───────────────────────────────────────────────
 // Returns the calling studio-admin's studio settings.
@@ -28,7 +29,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Studio not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ success: true, data: studio });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const s = studio.toObject ? studio.toObject() : (studio as any);
+  return NextResponse.json({
+    success: true,
+    data: { ...s, logo: s.logo ? signCDNUrl(s.logo) : s.logo },
+  });
 }
 
 // ── PATCH /api/studio/settings ────────────────────────────────────────────

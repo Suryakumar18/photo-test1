@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Studio } from "@/models/Studio";
 import { requireAuth } from "@/lib/auth";
-import { uploadToBunny } from "@/lib/bunny";
+import { uploadToBunny, signCDNUrl } from "@/lib/bunny";
 import { v4 as uuidv4 } from "uuid";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/svg+xml"];
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
       }
     );
 
-    return NextResponse.json({ success: true, data: { logoUrl: cdnUrl } });
+    return NextResponse.json({ success: true, data: { logoUrl: signCDNUrl(cdnUrl) } });
   } catch (error) {
     console.error("Logo upload error:", error);
     return NextResponse.json({ success: false, error: "Logo upload failed" }, { status: 500 });
