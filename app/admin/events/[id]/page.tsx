@@ -130,6 +130,14 @@ export default function EventDetailPage() {
       .catch(() => {});
   }, [id]);
 
+  // Pre-warm face-api.js models as soon as the admin opens the event page.
+  // This means the first upload's auto-indexing fires instantly (no 5-second wait).
+  useEffect(() => {
+    import("@/lib/face-recognition")
+      .then(({ loadModels }) => loadModels())
+      .catch(() => {});
+  }, []);
+
   // scanAllFaces is defined after `photos` (line ~195) to avoid TDZ reference errors
 
   useEffect(() => {
@@ -188,33 +196,62 @@ export default function EventDetailPage() {
 
   const photos: Array<{
     _id: string; cdnUrl: string; originalName: string; size: number; createdAt: string;
+    isProcessed?: boolean;
   }> = photosData?.photos ?? [];
 
   /**
-   * Batch-index all event photos (run 4 in parallel for speed).
-   * Called when admin clicks "Scan All Faces".
-   * Defined here so `photos` is in scope (avoids TDZ reference errors).
+   * Core scan engine — indexes a given list of photos in batches of 4.
+   * Used both by the manual "Scan Faces" button and the auto-scan on page load.
    */
-  const scanAllFaces = useCallback(async () => {
-    if (!photos.length) { toast.error("No photos to scan"); return; }
-
-    setScanState({ active: true, done: 0, total: photos.length, faces: 0 });
+  const scanPhotos = useCallback(async (
+    toScan: Array<{ _id: string; cdnUrl: string }>,
+    silent = false,
+  ) => {
+    if (!toScan.length) return;
+    setScanState({ active: true, done: 0, total: toScan.length, faces: 0 });
     const BATCH = 4;
     let totalFaces = 0;
 
-    for (let i = 0; i < photos.length; i += BATCH) {
-      const batch = photos.slice(i, i + BATCH);
+    for (let i = 0; i < toScan.length; i += BATCH) {
+      const batch = toScan.slice(i, i + BATCH);
       const counts = await Promise.all(
-        batch.map((p) => indexPhotoFaces(p._id, p.cdnUrl))
+        batch.map((p) => indexPhotoFaces(p._id, p.cdnUrl)),
       );
       totalFaces += counts.reduce((a, b) => a + b, 0);
-      setScanState({ active: true, done: Math.min(i + BATCH, photos.length), total: photos.length, faces: totalFaces });
+      setScanState({ active: true, done: Math.min(i + BATCH, toScan.length), total: toScan.length, faces: totalFaces });
     }
 
     setScanState((prev) => prev ? { ...prev, active: false } : null);
-    setFaceIndexed(photos.length);  // all photos now processed
-    toast.success(`✅ Scanned ${photos.length} photos · ${totalFaces} faces indexed`);
-  }, [photos, indexPhotoFaces]);
+    setFaceIndexed(photos.length);
+    if (!silent || totalFaces > 0) {
+      toast.success(`✅ Scanned ${toScan.length} photos · ${totalFaces} faces indexed`);
+    }
+  }, [indexPhotoFaces, photos.length]);
+
+  /** Manual "Scan All Faces" — re-indexes every photo (admin button). */
+  const scanAllFaces = useCallback(async () => {
+    if (!photos.length) { toast.error("No photos to scan"); return; }
+    await scanPhotos(photos);
+  }, [photos, scanPhotos]);
+
+  /**
+   * Auto-scan: runs once when the event page opens.
+   * Only processes photos that haven't been indexed yet (isProcessed !== true).
+   * Runs silently in the background — no toast if 0 new faces found.
+   */
+  const autoScannedRef = useRef(false);
+  useEffect(() => {
+    if (autoScannedRef.current || !photos.length || scanState !== null) return;
+    const unprocessed = photos.filter((p) => !p.isProcessed);
+    if (!unprocessed.length) return;                  // all photos already indexed
+
+    autoScannedRef.current = true;
+    scanPhotos(unprocessed, true).catch(() => {
+      autoScannedRef.current = false;                 // allow retry on error
+      setScanState(null);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photos, scanPhotos]);                           // scanState intentionally omitted — ref guards re-entry
 
   // ── Status mutation ────────────────────────────────────────────────────────
 
@@ -792,25 +829,11 @@ export default function EventDetailPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                {/* ── Face scan needed banner ──────────────────────────────── */}
-                {faceIndexed === 0 && photos.length > 0 && !scanState && (
-                  <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-0.5">
-                        Face search not ready
-                      </p>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        Guests can&apos;t find their photos yet. Click{" "}
-                        <button
-                          onClick={scanAllFaces}
-                          className="underline underline-offset-2 text-amber-600 dark:text-amber-400 font-medium"
-                        >
-                          Scan Faces
-                        </button>{" "}
-                        to index all photos. This runs once in your browser and takes a few minutes.
-                      </p>
-                    </div>
+                {/* ── Auto-scan notice (shown while background scan runs) ──── */}
+                {scanState?.active && (
+                  <div className="mb-3 flex items-center gap-2 text-xs text-primary/80">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    <span>AI is indexing faces in the background — guests will be able to search as soon as this finishes.</span>
                   </div>
                 )}
 
