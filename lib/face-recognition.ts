@@ -35,7 +35,7 @@ async function getFaceApi() {
   return faceapi;
 }
 
-/** Load the 3 model networks once. Safe to call repeatedly. */
+/** Load the 3 model networks once. Safe to call repeatedly. Retries on failure. */
 export async function loadModels(): Promise<void> {
   if (modelsPromise) return modelsPromise;
   modelsPromise = (async () => {
@@ -46,7 +46,12 @@ export async function loadModels(): Promise<void> {
       api.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
     ]);
   })();
-  return modelsPromise;
+  // If loading fails, reset the cached promise so the next call retries from scratch
+  // (without this, a transient network error permanently breaks all face detection)
+  return modelsPromise.catch((err) => {
+    modelsPromise = null;
+    throw err;
+  });
 }
 
 /**

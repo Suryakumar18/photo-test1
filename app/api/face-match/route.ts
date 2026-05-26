@@ -19,6 +19,11 @@ import { FaceEmbedding } from "@/models/FaceEmbedding";
 import { Event } from "@/models/Event";
 import { signCDNUrl } from "@/lib/bunny";
 
+// How many photos have been face-scanned for this event
+async function getScannedCount(eventId: string): Promise<number> {
+  return Photo.countDocuments({ eventId, isProcessed: true });
+}
+
 // ── Euclidean distance on 128-d FaceNet descriptors ───────────────────────────
 function euclidean(a: number[], b: number[]): number {
   let sum = 0;
@@ -64,9 +69,17 @@ export async function POST(req: NextRequest) {
       .lean();
 
     if (embeddings.length === 0) {
+      // Distinguish "never scanned" (isProcessed=false on all photos)
+      // from "scanned but no faces found in any photo"
+      const scanned = await getScannedCount(eventId);
       return NextResponse.json({
         success: true,
-        data: { indexed: false, matchCount: 0, photos: [] },
+        data: {
+          indexed:    scanned > 0,  // true = was scanned, just no faces found
+          scanned,
+          matchCount: 0,
+          photos:     [],
+        },
       });
     }
 

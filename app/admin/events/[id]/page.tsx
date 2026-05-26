@@ -83,7 +83,8 @@ export default function EventDetailPage() {
 
   // ── Face indexing ─────────────────────────────────────────────────────────
   interface ScanState { active: boolean; done: number; total: number; faces: number }
-  const [scanState, setScanState] = useState<ScanState | null>(null);
+  const [scanState, setScanState]       = useState<ScanState | null>(null);
+  const [faceIndexed, setFaceIndexed]   = useState<number | null>(null); // how many photos scanned
 
   /**
    * Extract face descriptors from a photo and store them in MongoDB.
@@ -113,6 +114,20 @@ export default function EventDetailPage() {
     } catch {
       return 0;
     }
+  }, [id]);
+
+  // Fetch face-index status so we know whether scanning has ever been run
+  useEffect(() => {
+    if (!id) return;
+    const token = getToken();
+    fetch(`/api/faces/store?eventId=${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.success) setFaceIndexed(j.data?.indexedPhotos ?? 0);
+      })
+      .catch(() => {});
   }, [id]);
 
   // scanAllFaces is defined after `photos` (line ~195) to avoid TDZ reference errors
@@ -197,6 +212,7 @@ export default function EventDetailPage() {
     }
 
     setScanState((prev) => prev ? { ...prev, active: false } : null);
+    setFaceIndexed(photos.length);  // all photos now processed
     toast.success(`✅ Scanned ${photos.length} photos · ${totalFaces} faces indexed`);
   }, [photos, indexPhotoFaces]);
 
@@ -776,6 +792,28 @@ export default function EventDetailPage() {
                 </div>
               </CardHeader>
               <CardContent>
+                {/* ── Face scan needed banner ──────────────────────────────── */}
+                {faceIndexed === 0 && photos.length > 0 && !scanState && (
+                  <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-0.5">
+                        Face search not ready
+                      </p>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        Guests can&apos;t find their photos yet. Click{" "}
+                        <button
+                          onClick={scanAllFaces}
+                          className="underline underline-offset-2 text-amber-600 dark:text-amber-400 font-medium"
+                        >
+                          Scan Faces
+                        </button>{" "}
+                        to index all photos. This runs once in your browser and takes a few minutes.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Face scan progress */}
                 {scanState && (
                   <div className="mb-4 p-3 rounded-xl bg-primary/5 border border-primary/20">

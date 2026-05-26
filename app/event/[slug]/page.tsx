@@ -350,9 +350,13 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
       if (!res.ok) throw new Error(json.error ?? "Match failed");
 
       if (!json.data.indexed) {
+        // scanned=0 means the admin has never run "Scan Faces"
         setErrorMsg(
-          "The photos for this event haven't been scanned yet. " +
-          "Please ask the photographer to run 'Scan Faces' in the admin panel.",
+          json.data.scanned === 0
+            ? "The photos for this event haven't been scanned yet. " +
+              "Please ask the photographer to run 'Scan Faces' in the admin panel."
+            : "Face scanning is in progress or no faces were found in the event photos. " +
+              "Please try again in a moment.",
         );
         setStep("results");
         return;
