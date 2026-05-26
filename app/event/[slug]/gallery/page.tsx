@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -65,11 +65,27 @@ export default function EventGalleryPage() {
   const wmEnabled = event?.watermark?.enabled ?? false;
   const wmUrl     = event?.watermark?.url;
 
+  const prevCountRef = useRef<number>(0);
+
   const { data: photos = [], isLoading } = useQuery({
     queryKey: ["gallery-photos", event?._id],
     queryFn: () => fetchPhotos(event!._id),
     enabled: !!event?._id,
+    // Poll every 15 s so new uploads appear automatically
+    refetchInterval: 15 * 1000,
+    // Also refetch when the user switches back to this tab
+    refetchOnWindowFocus: true,
   });
+
+  // Toast when new photos arrive after initial load
+  useEffect(() => {
+    if (photos.length === 0) return;
+    if (prevCountRef.current > 0 && photos.length > prevCountRef.current) {
+      const added = photos.length - prevCountRef.current;
+      toast.success(`${added} new photo${added > 1 ? "s" : ""} added!`);
+    }
+    prevCountRef.current = photos.length;
+  }, [photos.length]);
 
   const filtered = search
     ? photos.filter((p) =>

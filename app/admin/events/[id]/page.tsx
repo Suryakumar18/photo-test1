@@ -236,8 +236,15 @@ export default function EventDetailPage() {
         )
       );
 
-      queryClient.invalidateQueries({ queryKey: ["photos", id] });
-      queryClient.invalidateQueries({ queryKey: ["event", id] });
+      // Await DB refetch so the photo appears in the main grid,
+      // then remove the upload preview — prevents the same image showing twice.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["photos", id] }),
+        queryClient.invalidateQueries({ queryKey: ["event", id] }),
+      ]);
+      // Small buffer so React renders the refetched grid before the preview disappears
+      await new Promise<void>((resolve) => setTimeout(resolve, 600));
+      setUploads((prev) => prev.filter((u) => u.id !== item.id));
     } catch (err) {
       setUploads((prev) =>
         prev.map((u) =>
