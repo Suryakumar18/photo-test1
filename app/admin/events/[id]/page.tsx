@@ -236,15 +236,10 @@ export default function EventDetailPage() {
         )
       );
 
-      // Await DB refetch so the photo appears in the main grid,
-      // then remove the upload preview — prevents the same image showing twice.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["photos", id] }),
-        queryClient.invalidateQueries({ queryKey: ["event", id] }),
-      ]);
-      // Small buffer so React renders the refetched grid before the preview disappears
-      await new Promise<void>((resolve) => setTimeout(resolve, 600));
-      setUploads((prev) => prev.filter((u) => u.id !== item.id));
+      // Refetch the photo grid — the new photo comes from DB, not the preview.
+      // Done previews are intentionally NOT shown in the main grid (upload panel shows ✓).
+      queryClient.invalidateQueries({ queryKey: ["photos", id] });
+      queryClient.invalidateQueries({ queryKey: ["event", id] });
     } catch (err) {
       setUploads((prev) =>
         prev.map((u) =>
@@ -780,21 +775,8 @@ export default function EventDetailPage() {
                       </motion.div>
                     ))}
 
-                    {/* Just-uploaded previews (done status) */}
-                    {uploads.filter((u) => u.status === "done").map((u) => (
-                      <motion.div
-                        key={u.id}
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="aspect-square rounded-xl overflow-hidden relative"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={u.cdnUrl || u.preview} alt={u.file.name} className="w-full h-full object-cover" />
-                        <div className="absolute top-1.5 right-1.5 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
-                          <Check className="w-3 h-3 text-white" />
-                        </div>
-                      </motion.div>
-                    ))}
+                    {/* Note: done uploads are NOT shown here — they arrive via DB refetch above.
+                        The upload panel (above) shows the ✓ status for completed uploads. */}
 
                     {/* Uploading previews */}
                     {uploads.filter((u) => u.status === "uploading" || u.status === "pending").map((u) => (

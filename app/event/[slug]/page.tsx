@@ -10,7 +10,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
-import { matchSelfieToPhotos, NoFaceError, type MatchResult } from "@/lib/face-recognition";
+import {
+  matchSelfieToPhotos, NoFaceError, type MatchResult,
+  SENSITIVITY, type SensitivityLevel,
+} from "@/lib/face-recognition";
 import toast from "react-hot-toast";
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -232,6 +235,7 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
   const [liked, setLiked] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState({ done: 0, total: 0, found: 0 });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [sensitivity, setSensitivity] = useState<SensitivityLevel>("balanced");
 
   // Preload event photos so they're ready when the user uploads a selfie
   const { data: photos = [] } = useQuery({
@@ -260,9 +264,12 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
       }
 
       setProgress({ done: 0, total: eventPhotos.length, found: 0 });
-      const results = await matchSelfieToPhotos(file, eventPhotos, (done, total, found) => {
-        setProgress({ done, total, found });
-      });
+      const results = await matchSelfieToPhotos(
+        file,
+        eventPhotos,
+        (done, total, found) => setProgress({ done, total, found }),
+        SENSITIVITY[sensitivity],
+      );
       setMatches(results);
       setStep("results");
     } catch (err) {
@@ -346,11 +353,26 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
               {errorMsg ??
                 "Our AI scanned every photo but didn't find a match. Try a clearer selfie, or the photographer may still be uploading."}
             </p>
-            <div className="flex gap-3 justify-center">
-              <Button variant="outline" onClick={onBack}>Back</Button>
-              <Button onClick={() => { setStep("upload"); setSelfiePreview(null); setErrorMsg(null); }}>
-                Try Again
-              </Button>
+            <div className="flex flex-col gap-3 items-center">
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={onBack}>Back</Button>
+                <Button onClick={() => { setStep("upload"); setSelfiePreview(null); setErrorMsg(null); }}>
+                  Try Again
+                </Button>
+              </div>
+              {!errorMsg && sensitivity !== "loose" && (
+                <button
+                  className="text-xs text-primary underline underline-offset-2"
+                  onClick={() => {
+                    setSensitivity("loose");
+                    setStep("upload");
+                    setSelfiePreview(null);
+                    setErrorMsg(null);
+                  }}
+                >
+                  Try with "More Matches" sensitivity →
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -443,6 +465,38 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
             <p className="text-muted-foreground text-sm leading-relaxed">
               Take a clear, front-facing selfie. Our AI will scan all {photos.length || ""} event photos
               and find the ones you&apos;re in.
+            </p>
+          </motion.div>
+
+          {/* Sensitivity selector */}
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+            <p className="text-xs text-muted-foreground text-center mb-2 font-medium">Match sensitivity</p>
+            <div className="flex gap-2 mb-5">
+              {(["strict", "balanced", "loose"] as SensitivityLevel[]).map((lvl) => {
+                const labels: Record<SensitivityLevel, string> = {
+                  strict: "Precise",
+                  balanced: "Balanced",
+                  loose: "More Matches",
+                };
+                return (
+                  <button
+                    key={lvl}
+                    onClick={() => setSensitivity(lvl)}
+                    className={`flex-1 py-2 px-2 rounded-xl text-xs font-semibold border-2 transition-all ${
+                      sensitivity === lvl
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    {labels[lvl]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground text-center mb-4">
+              {sensitivity === "strict" && "Only very clear face matches — fewest false positives"}
+              {sensitivity === "balanced" && "Best for most photos — recommended starting point"}
+              {sensitivity === "loose" && "Finds more matches — good for group or angled shots"}
             </p>
           </motion.div>
 

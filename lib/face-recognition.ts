@@ -13,11 +13,20 @@ let modelsPromise: Promise<void> | null = null;
 const MODEL_URL = "/models";
 
 /**
- * Euclidean-distance threshold for a match. face-api's own default is 0.6.
- * 0.55 is a good balance — strict enough to avoid false positives,
- * loose enough to catch the same person across different photos.
+ * Sensitivity levels — map to euclidean-distance thresholds.
+ * Lower = stricter (fewer but more accurate matches).
+ * Higher = looser (more matches, some false positives).
  */
-export const MATCH_THRESHOLD = 0.55;
+export const SENSITIVITY = {
+  strict:   0.46,   // Precise — only very clear matches
+  balanced: 0.60,   // Default — good balance
+  loose:    0.72,   // More Matches — catches harder angles/lighting
+} as const;
+
+export type SensitivityLevel = keyof typeof SENSITIVITY;
+
+/** Default threshold (balanced). */
+export const MATCH_THRESHOLD = SENSITIVITY.balanced;
 
 async function getFaceApi() {
   if (!faceapi) {
@@ -31,7 +40,6 @@ export async function loadModels(): Promise<void> {
   if (modelsPromise) return modelsPromise;
   modelsPromise = (async () => {
     const api = await getFaceApi();
-    // The TensorFlow.js backend initialises itself on first inference.
     await Promise.all([
       api.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
       api.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -41,7 +49,7 @@ export async function loadModels(): Promise<void> {
   return modelsPromise;
 }
 
-/** Decode a File / blob URL into an <img> element. */
+/** Decode a File / Blob into an <img> element via a local blob URL. */
 async function fileToImage(file: File): Promise<HTMLImageElement> {
   const url = URL.createObjectURL(file);
   const img = new Image();
@@ -50,10 +58,29 @@ async function fileToImage(file: File): Promise<HTMLImageElement> {
   return img;
 }
 
-/** Load a remote image through our proxy so the canvas isn't CORS-tainted. */
+/**
+ * Load any image URL into an <img> element, ready for face-api.
+ *
+ * - Relative paths like /api/img/... are fetched directly (same-origin, no CORS).
+ * - Absolute https:// URLs are routed through /api/image-proxy for CORS safety.
+ *
+ * This is the key fix: previously all URLs went through image-proxy, which
+ * rejected relative /api/img/... paths with 400 "invalid url", silently
+ * breaking face detection for every photo.
+ */
 async function urlToImage(url: string): Promise<HTMLImageElement> {
-  const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
-  if (!res.ok) throw new Error("image fetch failed");
+  let fetchUrl: string;
+
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    // Remote CDN URL — proxy for CORS canvas safety
+    fetchUrl = `/api/image-proxy?url=${encodeURIComponent(url)}`;
+  } else {
+    // Already a same-origin relative path (/api/img/...) — fetch directly
+    fetchUrl = url;
+  }
+
+  const res = await fetch(fetchUrl);
+  if (!res.ok) throw new Error(`image fetch failed: ${res.status} ${fetchUrl}`);
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);
   const img = new Image();
@@ -69,7 +96,7 @@ export async function getSelfieDescriptor(file: File): Promise<Float32Array | nu
   const img = await fileToImage(file);
   try {
     const detection = await api
-      .detectSingleFace(img, new api.SsdMobilenetv1Options({ minConfidence: 0.35 }))
+      .detectSingleFace(img, new api.SsdMobilenetv1Options({ minConfidence: 0.3 }))
       .withFaceLandmarks()
       .withFaceDescriptor();
     return detection ? detection.descriptor : null;
@@ -78,14 +105,14 @@ export async function getSelfieDescriptor(file: File): Promise<Float32Array | nu
   }
 }
 
-/** Compute descriptors for every face found in a remote photo. */
+/** Compute descriptors for every face found in a remote/proxy photo. */
 export async function getPhotoDescriptors(url: string): Promise<Float32Array[]> {
   await loadModels();
   const api = await getFaceApi();
   const img = await urlToImage(url);
   try {
     const detections = await api
-      .detectAllFaces(img, new api.SsdMobilenetv1Options({ minConfidence: 0.35 }))
+      .detectAllFaces(img, new api.SsdMobilenetv1Options({ minConfidence: 0.3 }))
       .withFaceLandmarks()
       .withFaceDescriptors();
     return detections.map((d) => d.descriptor);
@@ -121,11 +148,17 @@ export class NoFaceError extends Error {
 /**
  * Match a selfie against a list of photos.
  * Processes photos one-by-one and reports progress so the UI can animate.
+ *
+ * @param selfie       The selfie File object
+ * @param photos       Array of photos with cdnUrl (may be /api/img/... or https://...)
+ * @param onProgress   Optional progress callback
+ * @param threshold    Euclidean distance cutoff (use SENSITIVITY.* constants)
  */
 export async function matchSelfieToPhotos<T extends { cdnUrl: string }>(
   selfie: File,
   photos: T[],
-  onProgress?: (done: number, total: number, matchesSoFar: number) => void
+  onProgress?: (done: number, total: number, matchesSoFar: number) => void,
+  threshold: number = MATCH_THRESHOLD,
 ): Promise<MatchResult<T>[]> {
   const selfieDescriptor = await getSelfieDescriptor(selfie);
   if (!selfieDescriptor) {
@@ -143,13 +176,13 @@ export async function matchSelfieToPhotos<T extends { cdnUrl: string }>(
         const dist = euclideanDistance(selfieDescriptor, d);
         if (dist < best) best = dist;
       }
-      if (best < MATCH_THRESHOLD) {
-        // Map distance (0..threshold) → confidence (100..~50)
-        const confidence = Math.round(Math.max(0, (1 - best)) * 100);
+      if (best <= threshold) {
+        // Map distance (0..1) → confidence percentage
+        const confidence = Math.round(Math.max(0, Math.min(100, (1 - best) * 100)));
         matches.push({ photo, distance: best, confidence });
       }
     } catch {
-      // a single photo failing to load shouldn't abort the whole scan
+      // A single photo failing to load shouldn't abort the whole scan
     }
     onProgress?.(i + 1, photos.length, matches.length);
   }
