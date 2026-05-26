@@ -1,15 +1,40 @@
+/**
+ * POST /api/face-match
+ *
+ * Two modes — detected from Content-Type:
+ *
+ * ── Server-side mode (multipart/form-data) ─────────────────────────────────
+ *   Fields: selfie (File), eventId (string), sensitivity? (strict|balanced|loose)
+ *   • Server runs face-api.js (CPU backend) on the selfie — NO browser ML
+ *   • Compares 128-d FaceNet descriptor against stored embeddings
+ *   • ~1-2 s total; guest never downloads a 6 MB model
+ *
+ * ── Browser-fallback mode (application/json) ───────────────────────────────
+ *   Body: { descriptor: number[128], eventId, threshold?, sensitivity? }
+ *   • Browser already computed the descriptor — just compare server-side
+ *   • Works as fallback if server-side selfie processing fails
+ *
+ * Response:
+ *   { success, data: { indexed, matchCount, photos[] } }
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import { Photo } from "@/models/Photo";
 import { FaceEmbedding } from "@/models/FaceEmbedding";
 import { Event } from "@/models/Event";
 import { signCDNUrl } from "@/lib/bunny";
+import { extractSelfieDescriptor } from "@/lib/face-recognition-server";
 
-/**
- * Euclidean distance between two 128-d face descriptors.
- * This matches the metric used by face-api.js / FaceNet.
- * Range 0–2; threshold ≤ 0.6 is a reliable match.
- */
+// ── Thresholds (euclidean distance on 128-d FaceNet) ─────────────────────────
+const THRESHOLDS = {
+  strict:   0.46,
+  balanced: 0.60,
+  loose:    0.72,
+} as const;
+type Sensitivity = keyof typeof THRESHOLDS;
+
+// ── Distance function ─────────────────────────────────────────────────────────
 function euclidean(a: number[], b: number[]): number {
   let sum = 0;
   for (let i = 0; i < 128; i++) {
@@ -19,36 +44,61 @@ function euclidean(a: number[], b: number[]): number {
   return Math.sqrt(sum);
 }
 
-/**
- * POST /api/face-match
- * Body (JSON): {
- *   descriptor : number[]   — 128-d face descriptor computed by face-api.js in the browser
- *   eventId    : string
- *   threshold? : number     — euclidean distance cut-off (default 0.60)
- * }
- *
- * Returns photos that contain a face within `threshold` distance of the selfie.
- * Because embeddings are pre-indexed, this runs in milliseconds even for 10,000+ faces.
- */
+// ── Handler ───────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as {
-      descriptor: number[];
-      eventId: string;
-      threshold?: number;
-    };
+    const contentType = req.headers.get("content-type") ?? "";
 
-    const { descriptor, eventId, threshold = 0.6 } = body;
+    let descriptor: number[];
+    let eventId: string;
+    let threshold: number;
 
-    if (
-      !eventId ||
-      !Array.isArray(descriptor) ||
-      descriptor.length !== 128
-    ) {
-      return NextResponse.json(
-        { success: false, error: "eventId and a 128-d descriptor are required" },
-        { status: 400 }
-      );
+    if (contentType.includes("multipart/form-data")) {
+      // ── Server-side mode: selfie file ──────────────────────────────────────
+      const form       = await req.formData();
+      const selfieFile = form.get("selfie") as File | null;
+      eventId          = (form.get("eventId") as string) ?? "";
+      const sensitivity = (form.get("sensitivity") as Sensitivity) ?? "balanced";
+      threshold         = THRESHOLDS[sensitivity] ?? THRESHOLDS.balanced;
+
+      if (!selfieFile || !eventId) {
+        return NextResponse.json(
+          { success: false, error: "selfie (file) and eventId are required" },
+          { status: 400 },
+        );
+      }
+
+      const imageBuffer = Buffer.from(await selfieFile.arrayBuffer());
+      const desc        = await extractSelfieDescriptor(imageBuffer);
+
+      if (!desc) {
+        return NextResponse.json(
+          { success: false, error: "NO_FACE_IN_SELFIE" },
+          { status: 422 },
+        );
+      }
+
+      descriptor = desc;
+    } else {
+      // ── JSON fallback: browser-computed descriptor ─────────────────────────
+      const body = (await req.json()) as {
+        descriptor: number[];
+        eventId: string;
+        threshold?: number;
+        sensitivity?: string;
+      };
+
+      descriptor = body.descriptor;
+      eventId    = body.eventId;
+      const sens = (body.sensitivity as Sensitivity) ?? "balanced";
+      threshold  = body.threshold ?? THRESHOLDS[sens] ?? THRESHOLDS.balanced;
+
+      if (!eventId || !Array.isArray(descriptor) || descriptor.length !== 128) {
+        return NextResponse.json(
+          { success: false, error: "eventId and a 128-d descriptor are required" },
+          { status: 400 },
+        );
+      }
     }
 
     await connectDB();
@@ -62,29 +112,22 @@ export async function POST(req: NextRequest) {
       .lean();
 
     if (embeddings.length === 0) {
-      // No index built yet — tell the client so it can show a helpful message
       return NextResponse.json({
         success: true,
-        data: {
-          indexed: false,
-          matchCount: 0,
-          photos: [],
-        },
+        data: { indexed: false, matchCount: 0, photos: [] },
       });
     }
 
-    // For each unique photo, find the closest face to the selfie descriptor.
-    // Using a plain Map is fast: 15,000 embeddings × 128 ops ≈ < 5ms in Node.js.
+    // ── Distance comparison ────────────────────────────────────────────────────
     const bestDistPerPhoto = new Map<string, number>();
 
     for (const emb of embeddings) {
       const photoId = emb.photoId.toString();
-      const dist = euclidean(descriptor, emb.embedding as number[]);
-      const prev = bestDistPerPhoto.get(photoId) ?? Infinity;
+      const dist    = euclidean(descriptor, emb.embedding as number[]);
+      const prev    = bestDistPerPhoto.get(photoId) ?? Infinity;
       if (dist < prev) bestDistPerPhoto.set(photoId, dist);
     }
 
-    // Filter and sort by distance ascending
     const hits = Array.from(bestDistPerPhoto.entries())
       .filter(([, dist]) => dist <= threshold)
       .sort(([, a], [, b]) => a - b);
@@ -96,26 +139,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const hitPhotoIds = hits.map(([id]) => id);
-
-    // Map distance → confidence score (0-100).  Distance 0 = 100 %, distance 0.6 = ~40 %.
+    const hitPhotoIds  = hits.map(([id]) => id);
     const confidenceOf = (dist: number) =>
       Math.round(Math.max(0, Math.min(100, (1 - dist / threshold) * 100)));
+    const confidenceMap = new Map(hits.map(([id, dist]) => [id, confidenceOf(dist)]));
 
-    const confidenceMap = new Map(
-      hits.map(([id, dist]) => [id, confidenceOf(dist)])
-    );
-
-    // Fetch photo records
+    // Fetch full photo records
     const dbPhotos = await Photo.find({ _id: { $in: hitPhotoIds } })
       .select("_id cdnUrl originalName filename size mimeType createdAt hasFaces faceCount")
       .lean();
 
     // Sort by confidence descending
-    dbPhotos.sort(
+    (dbPhotos as any[]).sort(
       (a, b) =>
-        (confidenceMap.get(b._id.toString()) ?? 0) -
-        (confidenceMap.get(a._id.toString()) ?? 0)
+        (confidenceMap.get(String(b._id)) ?? 0) -
+        (confidenceMap.get(String(a._id)) ?? 0),
     );
 
     return NextResponse.json({
@@ -123,19 +161,18 @@ export async function POST(req: NextRequest) {
       data: {
         indexed: true,
         matchCount: dbPhotos.length,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        photos: dbPhotos.map((p: any) => ({
+        photos: (dbPhotos as any[]).map((p) => ({
           ...p,
-          cdnUrl: signCDNUrl(p.cdnUrl),
+          cdnUrl:     signCDNUrl(p.cdnUrl),
           confidence: confidenceMap.get(p._id.toString()) ?? 0,
         })),
       },
     });
   } catch (error) {
-    console.error("Face match error:", error);
+    console.error("[face-match]", error);
     return NextResponse.json(
       { success: false, error: "Face matching failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

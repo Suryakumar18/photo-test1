@@ -10,10 +10,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
-import {
-  loadModels, getSelfieDescriptor, NoFaceError, type MatchResult,
-  SENSITIVITY, type SensitivityLevel,
-} from "@/lib/face-recognition";
 import toast from "react-hot-toast";
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -35,7 +31,24 @@ interface EventPhoto {
   cdnUrl: string;
   thumbnailUrl?: string;
   originalName?: string;
+  confidence?: number;
 }
+
+type Sensitivity = "strict" | "balanced" | "loose";
+
+// ─── Sensitivity config ───────────────────────────────────────────────────────
+
+const SENSITIVITY_LABELS: Record<Sensitivity, string> = {
+  strict:   "Precise",
+  balanced: "Balanced",
+  loose:    "More Matches",
+};
+
+const SENSITIVITY_DESC: Record<Sensitivity, string> = {
+  strict:   "Only very clear face matches — fewest false positives",
+  balanced: "Best for most photos — recommended starting point",
+  loose:    "Finds more matches — good for group or angled shots",
+};
 
 // ─── fetchers ─────────────────────────────────────────────────────────────────
 
@@ -45,23 +58,17 @@ async function fetchEvent(slug: string): Promise<EventData> {
   return (await res.json()).data;
 }
 
-async function fetchPhotos(eventId: string): Promise<EventPhoto[]> {
-  const res = await fetch(`/api/photos?eventId=${eventId}&limit=300`);
-  if (!res.ok) return [];
-  return (await res.json()).data.photos ?? [];
-}
-
 // ─── Main landing page (after QR scan) ───────────────────────────────────────
 
 export default function EventLandingPage() {
   const { slug } = useParams<{ slug: string }>();
-  const router = useRouter();
+  const router   = useRouter();
   const [choice, setChoice] = useState<"my-photos" | null>(null);
 
   const { data: event, isLoading, error } = useQuery({
     queryKey: ["event-public", slug],
-    queryFn: () => fetchEvent(slug),
-    retry: false,
+    queryFn:  () => fetchEvent(slug),
+    retry:    false,
   });
 
   if (choice === "my-photos" && event) {
@@ -161,7 +168,6 @@ export default function EventLandingPage() {
         </motion.div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
-          {/* Option 1 — Find My Photos */}
           <motion.button
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -184,7 +190,6 @@ export default function EventLandingPage() {
             <div className="absolute top-4 right-4 px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-full">AI</div>
           </motion.button>
 
-          {/* Option 2 — View All Photos */}
           <motion.button
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -226,20 +231,16 @@ export default function EventLandingPage() {
   );
 }
 
-// ─── Face Match Flow (REAL face recognition) ─────────────────────────────────
+// ─── Face Match Flow ──────────────────────────────────────────────────────────
 
 function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void }) {
-  const [step, setStep] = useState<"upload" | "processing" | "results">("upload");
+  const [step, setStep]               = useState<"upload" | "processing" | "results">("upload");
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
-  const [matches, setMatches] = useState<MatchResult<EventPhoto>[]>([]);
-  const [liked, setLiked] = useState<Set<string>>(new Set());
-  const [progress, setProgress] = useState({ done: 0, total: 0, found: 0 });
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [sensitivity, setSensitivity] = useState<SensitivityLevel>("balanced");
-
-  // photos list is no longer needed client-side — server does the matching
-  // (kept as empty array to avoid refactoring the selfie count display below)
-  const photos: EventPhoto[] = [];
+  const [matches, setMatches]         = useState<EventPhoto[]>([]);
+  const [liked, setLiked]             = useState<Set<string>>(new Set());
+  const [phaseMsg, setPhaseMsg]       = useState("");
+  const [errorMsg, setErrorMsg]       = useState<string | null>(null);
+  const [sensitivity, setSensitivity] = useState<Sensitivity>("balanced");
 
   const handleSelfieUpload = async (file: File) => {
     setSelfiePreview(URL.createObjectURL(file));
@@ -248,77 +249,63 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
     setStep("processing");
 
     try {
-      // Phase 1 — load models + compute selfie descriptor in the browser (1 image, ~2 s)
-      setProgress({ done: 0, total: 0, found: 0 }); // shows "Loading AI models…"
-      await loadModels();
-      setProgress({ done: 0, total: 1, found: 0 });  // shows "Detecting your face…"
+      setPhaseMsg("Uploading selfie to AI…");
 
-      const selfieDescriptor = await getSelfieDescriptor(file);
-      if (!selfieDescriptor) throw new NoFaceError();
+      // Send selfie as FormData — server runs face-api.js CPU backend
+      // Guest never downloads ML models; typical round-trip: 2-4 s
+      const form = new FormData();
+      form.append("selfie", file);
+      form.append("eventId", event._id);
+      form.append("sensitivity", sensitivity);
 
-      setProgress({ done: 1, total: 1, found: 0 }); // "Searching event photos…"
-
-      // Phase 2 — send descriptor to server; server compares against pre-indexed embeddings
-      // This takes < 1 second even for 10,000 stored face embeddings.
-      const res = await fetch("/api/face-match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          descriptor: Array.from(selfieDescriptor),   // Float32Array → number[]
-          eventId:    event._id,
-          threshold:  SENSITIVITY[sensitivity],
-        }),
-      });
-
+      setPhaseMsg("Detecting your face…");
+      const res  = await fetch("/api/face-match", { method: "POST", body: form });
       const json = await res.json();
+
+      if (res.status === 422 && json.error === "NO_FACE_IN_SELFIE") {
+        setErrorMsg("No face detected in your selfie. Please use a clear, front-facing photo in good lighting.");
+        setStep("results");
+        return;
+      }
+
       if (!res.ok) throw new Error(json.error || "Face match failed");
 
       if (!json.data.indexed) {
-        // Admin hasn't indexed faces for this event yet
         setErrorMsg(
-          "Face search is not set up for this event yet. " +
-          "Please ask the photographer to scan the event photos, or browse the full gallery."
+          "Face search hasn't been set up for this event yet. " +
+          "Please ask the photographer to scan the photos first, or browse the full gallery.",
         );
         setStep("results");
         return;
       }
 
-      const serverPhotos: EventPhoto[] = json.data.photos;
-      setProgress({ done: 1, total: 1, found: serverPhotos.length });
-
-      // Build MatchResult objects from server response (confidence already computed)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setMatches(serverPhotos.map((p: any) => ({
-        photo: p,
-        distance: 1 - (p.confidence / 100),
-        confidence: p.confidence,
-      })));
+      setPhaseMsg(`Found ${json.data.matchCount} match${json.data.matchCount === 1 ? "" : "es"}!`);
+      setMatches(json.data.photos);
       setStep("results");
-    } catch (err) {
-      if (err instanceof NoFaceError) {
-        setErrorMsg("No face detected in your selfie. Please use a clear, front-facing photo with good lighting.");
-      } else {
-        setErrorMsg("Something went wrong. Please try again.");
-      }
+    } catch {
+      setErrorMsg("Something went wrong. Please try again.");
       setStep("results");
     }
   };
 
   const downloadPhoto = (url: string, name: string) => {
-    const a = document.createElement("a");
-    a.href = url;
+    const a    = document.createElement("a");
+    a.href     = url;
     a.download = name || "photo.jpg";
-    a.target = "_blank";
+    a.target   = "_blank";
     a.click();
     toast.success("Download started!");
   };
 
   // ── Processing ─────────────────────────────────────────────────────────────
   if (step === "processing") {
-    const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center max-w-sm w-full">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center max-w-sm w-full"
+        >
           <div className="relative w-32 h-32 mx-auto mb-8">
             {selfiePreview && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -337,23 +324,17 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
           </div>
           <h2 className="text-2xl font-bold mb-2">Scanning Photos…</h2>
           <p className="text-muted-foreground text-sm mb-6">
-            {progress.total === 0
-              ? "Loading AI face model…"
-              : progress.done === 0
-              ? "Detecting your face in the selfie…"
-              : "Searching " + (progress.found > 0 ? `— ${progress.found} match${progress.found === 1 ? "" : "es"} found!` : "event photos…")}
+            {phaseMsg || "Analysing your selfie with AI…"}
           </p>
           <div className="h-2 bg-muted rounded-full overflow-hidden">
             <motion.div
               className="h-full bg-gradient-to-r from-rose-500 to-pink-500 rounded-full"
-              animate={{ width: progress.total === 0 ? "15%" : progress.done < progress.total ? "70%" : "100%" }}
-              transition={{ ease: "linear", duration: 0.5 }}
+              animate={{ width: ["15%", "80%", "100%"] }}
+              transition={{ duration: 5, ease: "easeOut" }}
             />
           </div>
           <p className="text-xs text-muted-foreground mt-3">
-            {progress.total === 0 && "Initializing face recognition…"}
-            {progress.total > 0 && progress.done === 0 && "Analysing selfie…"}
-            {progress.done > 0 && "Comparing against indexed photos on server…"}
+            Running AI face detection on our servers…
           </p>
         </motion.div>
       </div>
@@ -362,7 +343,6 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
 
   // ── Results ────────────────────────────────────────────────────────────────
   if (step === "results") {
-    // Error or no matches
     if (errorMsg || matches.length === 0) {
       return (
         <div className="min-h-screen bg-background flex items-center justify-center px-4">
@@ -371,7 +351,7 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
               <SearchX className="w-9 h-9 text-muted-foreground" />
             </div>
             <h2 className="text-xl font-bold mb-2">
-              {errorMsg ? "Couldn't Scan Your Selfie" : "No Photos Found"}
+              {errorMsg ? "Couldn't Find Your Photos" : "No Photos Found"}
             </h2>
             <p className="text-muted-foreground text-sm mb-6">
               {errorMsg ??
@@ -394,7 +374,7 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
                     setErrorMsg(null);
                   }}
                 >
-                  Try with "More Matches" sensitivity →
+                  Try with &quot;More Matches&quot; sensitivity →
                 </button>
               )}
             </div>
@@ -423,7 +403,7 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
 
         <div className="p-3 sm:p-4">
           <div className="columns-2 md:columns-3 gap-2 sm:gap-3 space-y-2 sm:space-y-3">
-            {matches.map(({ photo, confidence }, i) => (
+            {matches.map((photo, i) => (
               <motion.div
                 key={photo._id}
                 initial={{ opacity: 0, scale: 0.9 }}
@@ -434,21 +414,27 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={photo.cdnUrl} alt={photo.originalName ?? ""} className="w-full object-cover" loading="lazy" />
 
-                {/* Confidence badge */}
-                <div className="absolute top-2 left-2 px-2 py-0.5 bg-green-500/90 text-white text-[10px] font-bold rounded-full backdrop-blur-sm">
-                  {confidence}% match
-                </div>
+                {photo.confidence !== undefined && (
+                  <div className="absolute top-2 left-2 px-2 py-0.5 bg-green-500/90 text-white text-[10px] font-bold rounded-full backdrop-blur-sm">
+                    {photo.confidence}% match
+                  </div>
+                )}
 
                 <button
-                  onClick={() => setLiked((prev) => {
-                    const n = new Set(prev);
-                    if (n.has(photo._id)) n.delete(photo._id); else n.add(photo._id);
-                    return n;
-                  })}
+                  onClick={() =>
+                    setLiked((prev) => {
+                      const n = new Set(prev);
+                      n.has(photo._id) ? n.delete(photo._id) : n.add(photo._id);
+                      return n;
+                    })
+                  }
                   className="absolute top-2 right-2 p-2 bg-black/40 rounded-xl backdrop-blur-sm sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                 >
-                  <Heart className={`w-4 h-4 transition-colors ${liked.has(photo._id) ? "fill-rose-500 text-rose-500" : "text-white"}`} />
+                  <Heart
+                    className={`w-4 h-4 transition-colors ${liked.has(photo._id) ? "fill-rose-500 text-rose-500" : "text-white"}`}
+                  />
                 </button>
+
                 <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                   <Button
                     size="sm"
@@ -487,43 +473,34 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
             </div>
             <h2 className="text-2xl font-bold mb-2">Upload Your Selfie</h2>
             <p className="text-muted-foreground text-sm leading-relaxed">
-              Take a clear, front-facing selfie. Our AI will scan all {photos.length || ""} event photos
-              and find the ones you&apos;re in.
+              Take a clear, front-facing selfie. Our AI will scan all event photos and find every one you appear in.
             </p>
           </motion.div>
 
-          {/* Sensitivity selector */}
+          {/* Sensitivity */}
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
             <p className="text-xs text-muted-foreground text-center mb-2 font-medium">Match sensitivity</p>
-            <div className="flex gap-2 mb-5">
-              {(["strict", "balanced", "loose"] as SensitivityLevel[]).map((lvl) => {
-                const labels: Record<SensitivityLevel, string> = {
-                  strict: "Precise",
-                  balanced: "Balanced",
-                  loose: "More Matches",
-                };
-                return (
-                  <button
-                    key={lvl}
-                    onClick={() => setSensitivity(lvl)}
-                    className={`flex-1 py-2 px-2 rounded-xl text-xs font-semibold border-2 transition-all ${
-                      sensitivity === lvl
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border text-muted-foreground hover:border-primary/40"
-                    }`}
-                  >
-                    {labels[lvl]}
-                  </button>
-                );
-              })}
+            <div className="flex gap-2 mb-3">
+              {(["strict", "balanced", "loose"] as Sensitivity[]).map((lvl) => (
+                <button
+                  key={lvl}
+                  onClick={() => setSensitivity(lvl)}
+                  className={`flex-1 py-2 px-2 rounded-xl text-xs font-semibold border-2 transition-all ${
+                    sensitivity === lvl
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  {SENSITIVITY_LABELS[lvl]}
+                </button>
+              ))}
             </div>
-            <p className="text-[11px] text-muted-foreground text-center mb-4">
-              {sensitivity === "strict" && "Only very clear face matches — fewest false positives"}
-              {sensitivity === "balanced" && "Best for most photos — recommended starting point"}
-              {sensitivity === "loose" && "Finds more matches — good for group or angled shots"}
+            <p className="text-[11px] text-muted-foreground text-center mb-5">
+              {SENSITIVITY_DESC[sensitivity]}
             </p>
           </motion.div>
 
+          {/* Upload zone */}
           <motion.label initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="block cursor-pointer">
             <input
               type="file"
@@ -546,9 +523,9 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }} className="mt-6 grid grid-cols-3 gap-3 sm:gap-4 text-center">
             {[
-              { icon: Brain,    label: "Real AI" },
-              { icon: Sparkles, label: "On-Device" },
-              { icon: Images,   label: "Private" },
+              { icon: Brain,    label: "Server AI" },
+              { icon: Sparkles, label: "Fast" },
+              { icon: Images,   label: "Accurate" },
             ].map(({ icon: Icon, label }) => (
               <div key={label} className="flex flex-col items-center gap-1.5">
                 <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center">
@@ -560,7 +537,7 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
           </motion.div>
 
           <p className="text-center text-[11px] text-muted-foreground mt-5">
-            Face matching runs entirely in your browser — your selfie never leaves your device.
+            Your selfie is analysed securely on our servers and never stored.
           </p>
         </div>
       </div>
