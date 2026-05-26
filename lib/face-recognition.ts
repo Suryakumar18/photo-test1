@@ -49,6 +49,39 @@ export async function loadModels(): Promise<void> {
   return modelsPromise;
 }
 
+/**
+ * Normalise any uploaded file to a JPEG blob so face-api.js always gets
+ * a canvas-compatible format.  This handles HEIC/HEIF from iPhones and any
+ * other exotic format the browser can display but can't pixel-read directly.
+ */
+async function normaliseToJpeg(file: File): Promise<File> {
+  // Already a safe canvas format — skip the round-trip
+  if (file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp") {
+    return file;
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas  = document.createElement("canvas");
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d")?.drawImage(img, 0, 0);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve(new File([blob], "selfie.jpg", { type: "image/jpeg" }));
+          else      reject(new Error("canvas toBlob failed"));
+        },
+        "image/jpeg",
+        0.92,
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image load failed")); };
+    img.src = url;
+  });
+}
+
 /** Decode a File / Blob into an <img> element via a local blob URL. */
 async function fileToImage(file: File): Promise<HTMLImageElement> {
   const url = URL.createObjectURL(file);
@@ -92,11 +125,13 @@ async function urlToImage(url: string): Promise<HTMLImageElement> {
 /** Compute a single 128-d face descriptor from an uploaded selfie. */
 export async function getSelfieDescriptor(file: File): Promise<Float32Array | null> {
   await loadModels();
-  const api = await getFaceApi();
-  const img = await fileToImage(file);
+  const api        = await getFaceApi();
+  const safeFile   = await normaliseToJpeg(file);   // converts HEIC / exotic formats
+  const img        = await fileToImage(safeFile);
   try {
     const detection = await api
-      .detectSingleFace(img, new api.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+      // 0.2 threshold mirrors the photo-indexing scan — catches selfies in varied lighting
+      .detectSingleFace(img, new api.SsdMobilenetv1Options({ minConfidence: 0.2 }))
       .withFaceLandmarks()
       .withFaceDescriptor();
     return detection ? detection.descriptor : null;
@@ -112,7 +147,8 @@ export async function getPhotoDescriptors(url: string): Promise<Float32Array[]> 
   const img = await urlToImage(url);
   try {
     const detections = await api
-      .detectAllFaces(img, new api.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+      // 0.2 threshold catches more small faces in group/crowd photos
+      .detectAllFaces(img, new api.SsdMobilenetv1Options({ minConfidence: 0.2 }))
       .withFaceLandmarks()
       .withFaceDescriptors();
     return detections.map((d) => d.descriptor);

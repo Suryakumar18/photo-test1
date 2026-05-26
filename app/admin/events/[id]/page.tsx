@@ -86,25 +86,30 @@ export default function EventDetailPage() {
   const [scanState, setScanState] = useState<ScanState | null>(null);
 
   /**
-   * Index faces for a single photo — fully server-side.
-   * Sends the photo's CDN URL to the server, which fetches the image from Bunny
-   * Storage and runs face-api.js (CPU backend) to extract + store 128-d descriptors.
-   * No browser ML loading needed; tab can be closed after triggering.
+   * Extract face descriptors from a photo and store them in MongoDB.
+   *
+   * Uses browser-side face-api.js (the reliable path).
+   * Server-side indexing (/api/faces/index-photo) is tried first as a future
+   * upgrade path but currently returns 503 → falls back to browser automatically.
    */
   const indexPhotoFaces = useCallback(async (photoId: string, proxyUrl: string): Promise<number> => {
+    // ── Browser-side: face-api.js (works reliably after URL-routing fix) ──────
     try {
-      const res = await fetch("/api/faces/index-photo", {
+      const { getPhotoDescriptors } = await import("@/lib/face-recognition");
+      const descriptors = await getPhotoDescriptors(proxyUrl);
+      if (descriptors.length === 0) return 0;
+
+      const embeddings = descriptors.map((d) => Array.from(d)); // Float32Array → number[]
+      const res = await fetch("/api/faces/store", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${getToken()}`,
         },
-        body: JSON.stringify({ photoId, eventId: id, cdnUrl: proxyUrl }),
+        body: JSON.stringify({ photoId, eventId: id, embeddings }),
       });
-
-      if (!res.ok) return 0;
       const json = await res.json();
-      return json.data?.facesIndexed ?? 0;
+      return res.ok ? (json.data?.facesIndexed ?? 0) : 0;
     } catch {
       return 0;
     }
