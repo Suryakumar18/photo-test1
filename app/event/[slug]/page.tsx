@@ -320,54 +320,80 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
     setLoadingPct(5);
 
     try {
-      // ── Step 1: Load face-api.js models ─────────────────────────────────
-      setLoadingMsg("Loading AI model…");
-      const { loadModels, getSelfieDescriptor, NoFaceError } = await import("@/lib/face-recognition");
+      // 1 ── Load models
+      setLoadingMsg("Loading AI…");
+      const {
+        loadModels, getSelfieDescriptor, getPhotoDescriptors, euclideanDistance, NoFaceError,
+      } = await import("@/lib/face-recognition");
       await loadModels();
-      setLoadingPct(40);
+      setLoadingPct(20);
 
-      // ── Step 2: Detect face in selfie ─────────────────────────────────────
+      // 2 ── Detect face in selfie
       setLoadingMsg("Detecting your face…");
-      const descriptor = await getSelfieDescriptor(file);
-      if (!descriptor) throw new NoFaceError();
-      setLoadingPct(70);
+      const selfieDesc = await getSelfieDescriptor(file);
+      if (!selfieDesc) throw new NoFaceError();
+      setLoadingPct(30);
 
-      // ── Step 3: Search server-side embeddings ────────────────────────────
-      setLoadingMsg("Searching event photos…");
-      const res  = await fetch("/api/face-match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          descriptor: Array.from(descriptor),
-          eventId:    event._id,
-          sensitivity,
-          threshold:  THRESHOLDS[sensitivity],
-        }),
-      });
-      const json = await res.json();
-      setLoadingPct(100);
-
-      if (!res.ok) throw new Error(json.error ?? "Match failed");
-
-      if (!json.data.indexed) {
-        // scanned=0 means the admin has never run "Scan Faces"
-        setErrorMsg(
-          json.data.scanned === 0
-            ? "The photos for this event haven't been scanned yet. " +
-              "Please ask the photographer to run 'Scan Faces' in the admin panel."
-            : "Face scanning is in progress or no faces were found in the event photos. " +
-              "Please try again in a moment.",
-        );
+      // 3 ── Fetch all photo URLs for this event (up to 500)
+      setLoadingMsg("Loading photos…");
+      const photosRes  = await fetch(`/api/photos?eventId=${event._id}&limit=500`);
+      const photosJson = await photosRes.json();
+      const allPhotos: EventPhoto[] = photosJson.data?.photos ?? [];
+      if (allPhotos.length === 0) {
+        setErrorMsg("No photos have been uploaded to this event yet.");
         setStep("results");
         return;
       }
+      setLoadingPct(35);
 
-      setMatches(json.data.photos);
+      // 4 ── Scan in parallel batches of 5, show results progressively
+      const threshold = THRESHOLDS[sensitivity];
+      const BATCH     = 5;
+      const found: EventPhoto[] = [];
+
+      for (let i = 0; i < allPhotos.length; i += BATCH) {
+        const batch = allPhotos.slice(i, i + BATCH);
+
+        const batchResults = await Promise.allSettled(
+          batch.map(async (photo) => {
+            const descs = await getPhotoDescriptors(photo.cdnUrl);
+            let best = Infinity;
+            for (const d of descs) {
+              const dist = euclideanDistance(selfieDesc, d);
+              if (dist < best) best = dist;
+            }
+            if (best <= threshold) {
+              const confidence = Math.round(
+                Math.max(0, Math.min(100, (1 - best / threshold) * 100)),
+              );
+              return { ...photo, confidence } as EventPhoto;
+            }
+            return null;
+          }),
+        );
+
+        for (const r of batchResults) {
+          if (r.status === "fulfilled" && r.value) found.push(r.value);
+        }
+
+        // Progressive update so user sees matches appearing live
+        if (found.length > 0) {
+          setMatches(
+            [...found].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0)),
+          );
+        }
+
+        const done = Math.min(i + BATCH, allPhotos.length);
+        setLoadingPct(35 + Math.round((done / allPhotos.length) * 65));
+        setLoadingMsg(`Scanning ${done} / ${allPhotos.length} photos…`);
+      }
+
+      setLoadingPct(100);
       setStep("results");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";
       if (msg === "NO_FACE_IN_SELFIE") {
-        setErrorMsg("No face detected. Please use a clear, well-lit front-facing photo.");
+        setErrorMsg("No face detected. Please use a clear, well-lit selfie.");
       } else {
         setErrorMsg("Something went wrong. Please try again.");
       }
@@ -561,18 +587,7 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
 
   // ── Step: results ─────────────────────────────────────────────────────────
   if (errorMsg || matches.length === 0) {
-    // ── No results / error ──────────────────────────────────────────────────
-    const isNotIndexed = errorMsg?.includes("haven't been scanned");
-    const isNoFace     = errorMsg?.includes("No face detected");
-    const isGenericErr = !!errorMsg && !isNotIndexed && !isNoFace;
-
-    const resultTitle = isNotIndexed
-      ? "Not Ready Yet"
-      : isNoFace
-      ? "No Face Detected"
-      : isGenericErr
-      ? "Couldn't Find Your Photos"
-      : "No Matches Found";
+    const isNoFace = errorMsg?.includes("No face detected");
 
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
@@ -585,31 +600,25 @@ function FaceMatchFlow({ event, onBack }: { event: EventData; onBack: () => void
             <div className="w-20 h-20 rounded-3xl bg-muted flex items-center justify-center mx-auto mb-5">
               <SearchX className="w-9 h-9 text-muted-foreground" />
             </div>
-            <h2 className="text-xl font-bold mb-2">{resultTitle}</h2>
+            <h2 className="text-xl font-bold mb-2">
+              {isNoFace ? "No Face Detected" : errorMsg ? "Couldn't Find Your Photos" : "No Matches Found"}
+            </h2>
             <p className="text-muted-foreground text-sm mb-7 leading-relaxed">
-              {errorMsg ??
-                "Our AI scanned every photo but didn't find you. Try a clearer selfie or switch to 'More Matches' sensitivity."}
+              {errorMsg ?? "We scanned every photo but didn't find you. Try a clearer selfie or switch to 'More Matches'."}
             </p>
 
             <div className="flex flex-col gap-3 items-center">
               <div className="flex gap-3">
                 <Button variant="outline" onClick={onBack}>Back</Button>
-                {!isNotIndexed && (
-                  <Button onClick={() => { setStep("options"); setSelfiePreview(null); setErrorMsg(null); }}>
-                    Try Again
-                  </Button>
-                )}
+                <Button onClick={() => { setStep("options"); setSelfiePreview(null); setErrorMsg(null); }}>
+                  Try Again
+                </Button>
               </div>
 
-              {!isNotIndexed && sensitivity !== "loose" && (
+              {sensitivity !== "loose" && (
                 <button
                   className="text-xs text-primary underline underline-offset-2"
-                  onClick={() => {
-                    setSensitivity("loose");
-                    setStep("options");
-                    setSelfiePreview(null);
-                    setErrorMsg(null);
-                  }}
+                  onClick={() => { setSensitivity("loose"); setStep("options"); setSelfiePreview(null); setErrorMsg(null); }}
                 >
                   Try with &quot;More Matches&quot; sensitivity →
                 </button>
